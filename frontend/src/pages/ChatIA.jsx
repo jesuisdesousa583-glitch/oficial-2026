@@ -88,8 +88,22 @@ export default function ChatIA() {
     audioRef.current = a;
     setPlayingIdx(idx);
     a.onended = () => setPlayingIdx(null);
-    a.onerror = () => setPlayingIdx(null);
-    a.play().catch(() => setPlayingIdx(null));
+    a.onerror = () => {
+      setPlayingIdx(null);
+      toast.error("Não consegui tocar o áudio. Verifique se o som do navegador/sistema está ativo.");
+    };
+    a.play().catch((err) => {
+      setPlayingIdx(null);
+      // Autoplay policy bloqueou — orientar o usuario a clicar manualmente
+      const isAutoplayBlock = err?.name === "NotAllowedError";
+      if (isAutoplayBlock) {
+        toast.info("Clique em \"Ouvir resposta\" para escutar — o navegador bloqueou o autoplay.", {
+          duration: 4500,
+        });
+      } else {
+        toast.error(`Erro ao tocar áudio: ${err?.message || "desconhecido"}`);
+      }
+    });
   };
 
   const stopAudio = () => {
@@ -278,7 +292,11 @@ export default function ChatIA() {
                         onClick={() =>
                           playingIdx === i ? stopAudio() : playAudio(m.audio_base64, i)
                         }
-                        className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-gold-700 hover:text-gold-900 font-medium"
+                        className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
+                          playingIdx === i
+                            ? "bg-gold-100 text-gold-900 hover:bg-gold-200"
+                            : "bg-gold-600 text-white hover:bg-gold-700"
+                        }`}
                         data-testid={`play-audio-${i}`}
                       >
                         {playingIdx === i ? (
@@ -287,7 +305,7 @@ export default function ChatIA() {
                           </>
                         ) : (
                           <>
-                            <Play className="w-3 h-3" /> Ouvir resposta
+                            <Volume2 className="w-3 h-3" /> Ouvir resposta da Ana
                           </>
                         )}
                       </button>
