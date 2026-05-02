@@ -2718,6 +2718,13 @@ async def baileys_webhook(request: Request):
             + (f"Legenda que o cliente escreveu: {image_caption}" if image_caption else "")
         )
 
+    # FALLBACK: cliente enviou audio mas Whisper falhou transcrever. NAO descartar
+    # — sinalizar que ele falou, persistir como audio inaudivel, e deixar o bot
+    # responder em audio (o usuario vai pedir pra repetir, mas a conversa segue).
+    if audio_b64 and not text:
+        text = "[áudio inaudível — pedir ao cliente para repetir]"
+        stored_text = "🎙️ (áudio recebido — sem transcrição)"
+
     if not phone or not text:
         return {"ok": True, "ignored": True}
     owner_id = await _resolve_owner_for_provider("baileys")
