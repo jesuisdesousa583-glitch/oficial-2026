@@ -1,0 +1,40 @@
+{
+  "summary": "Validated the new voice-mode feature (bot_voice_mode + bot_voice) end-to-end. 10/11 backend tests PASS covering config GET/PUT with backfill, webhook security, and all four voice modes (text_only, text_and_audio, audio_only, auto) including low-literacy heuristic. Frontend WhatsApp settings page exposes both data-testid='bot-voice-mode' and data-testid='bot-voice' selectors; change → Salvar persists to backend (verified via PUT→GET round-trip). One backend failure: when a client sends ONLY audio_base64 and Whisper transcription returns empty string (no text, no caption), the webhook returns {ok:true, ignored:true} at server.py line 2721 BEFORE persisting the contact or invoking _maybe_autorespond — so contact.prefer_audio is NEVER set and no audio reply is generated. Spec explicitly requires prefer_audio=true even when Whisper fails. Main agent's manual TESTE 2 passed because real audio transcribed successfully; synthetic/garbage audio exposes the gap. Default config restored to text_and_audio/nova after tests.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/whatsapp/webhook/baileys", "issue": "When audio_base64 is sent but Whisper transcription fails/returns empty AND no image_caption/text is present, the early-return at server.py:2721 ('if not phone or not text: return {ok:true,ignored:true}') skips contact persistence AND skips _maybe_autorespond — so contact.prefer_audio is never set. Spec requires prefer_audio=true even if Whisper fails. Fix: move the prefer_audio flag set + persistence BEFORE the text-empty guard when audio_b64 is present, OR synthesize a placeholder text like '[áudio inaudível]' so the reply path proceeds.", "priority": "MEDIUM"},
+      {"endpoint": "POST /api/whatsapp/webhook/baileys", "issue": "Still returns HTTP 200 with {ok:false,error:'unauthorized'} on wrong token (carry-over from iter1). Not blocking but inconsistent with REST semantics."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_voice_mode_iteration2.py",
+    "/app/test_reports/pytest/pytest_iteration2.xml"
+  ],
+  "action_items": [
+    "Fix the audio-only-when-Whisper-fails branch: ensure contact is persisted + prefer_audio=true is set BEFORE the text-empty early-return in /api/whatsapp/webhook/baileys (around line 2721). Consider falling through to _maybe_autorespond with text='[áudio]' placeholder so the bot can answer in audio.",
+    "(Optional/iter1 carry-over) Return HTTP 401 from the webhook on bad token instead of 200+{ok:false}."
+  ],
+  "critical_code_review_comments": [
+    "server.py now at 3759 lines — still growing, badly needs modularization into routers (auth, whatsapp, crm, chat, finance). The voice-mode logic in _maybe_autorespond (lines 2050-2196) is tightly coupled with send flow; extract a pure `resolve_voice_mode(cfg, contact, incoming_was_audio, text) -> (send_text, send_audio)` helper for unit-testability.",
+    "server.py:2101-2104 has dead/confusing code: `send_audio = bool(prefer_audio or isinstance(prov, BaileysProvider) is False or True is False) or True` followed immediately by `send_audio = True`. The first line is a no-op and should be removed for readability.",
+    "server.py:2612 correctly uses BAILEYS_INTERNAL_TOKEN fallback now — good. Token still arrives in JSON body; consider migrating to X-Internal-Token header as noted in iter1.",
+    "Low-literacy heuristic (lines 2060-2075) has the typo 'tava' duplicated in the set — harmless since it's a set, but a code smell. Also 'mim deve' contains a space which makes the `w in {...}` check never match since split() produces single-word tokens. Minor bug — that specific entry will never fire.",
+    "OpenAITextToSpeech is imported at top of file presumably; audio TTS fallback path is solid (falls back to text when TTS fails) — good defensive design."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_voice_mode_iteration2.py (new)"
+  ],
+  "success_rate": {"backend": "91% (10/11)", "frontend": "100% (voice-mode UI selectors present, functional, persist to backend)"},
+  "test_credentials": "admin@kenia-garcia.com.br / Kenia@Admin2026 (validated). BAILEYS_INTERNAL_TOKEN=legalflow-baileys-2026 validated.",
+  "seed_data_creation": "Created+cleaned TEST contacts (5511999100[1-6]) via webhook during tests. All removed in test teardown. Config restored to bot_voice_mode=text_and_audio, bot_voice=nova.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Voice mode feature is functional for text-input paths in all 4 modes (text_only, text_and_audio, audio_only, auto). UI has two selectors data-testid='bot-voice-mode' and data-testid='bot-voice'. The only gap is the pure-audio-with-Whisper-failure path which bails out early before setting prefer_audio. Sidecar Baileys is connected as 'Erik' — use only the webhook endpoint for testing, never /send-audio directly to real numbers. All test data prefixed with phone 5511999* for easy cleanup.",
+  "rca of the issue": "AUDIO + WHISPER FAILURE BAILS OUT EARLY. Flow: POST /api/whatsapp/webhook/baileys with audio_base64 and no text → server transcribes via Whisper (line 2671-2690) → transcribed=''→ text stays '' (line 2689 `if transcribed: text = transcribed` is false) → line 2721 `if not phone or not text: return {ok:true, ignored:true}` returns immediately → contact NOT persisted, prefer_audio NOT set, _maybe_autorespond NOT called. FIX: either (a) reorder so contact is saved and prefer_audio is set regardless of text presence when audio_b64 is present, or (b) assign `text = '[áudio inaudível]'` as fallback so the autoresponder proceeds. Reproduction: POST {token, phone:'5511999XXXX', audio_base64:'SUQzAwAAAAAAAA=='} → response {ok:true,ignored:true} (ideally transcribed:false too). Mitigation: if in production real audio usually transcribes OK, impact is limited to edge cases (silence, codec mismatch, very short clips); but spec is explicit so should be handled."
+}

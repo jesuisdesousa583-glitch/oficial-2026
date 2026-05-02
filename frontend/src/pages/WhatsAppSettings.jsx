@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import {
   Zap, Server, Building2, Smartphone, CheckCircle2, XCircle,
   Loader2, Bot, Send, QrCode, Copy, Activity, AlertTriangle, RefreshCw,
-  LogOut, AlertCircle,
+  LogOut, AlertCircle, Volume2,
 } from "lucide-react";
 
 export default function WhatsAppSettings() {
@@ -651,6 +651,57 @@ export default function WhatsAppSettings() {
               data-testid="bot-prompt"
               className="font-mono text-xs"
             />
+          </div>
+
+          {/* === MODO DE VOZ DA RESPOSTA AUTOMATICA === */}
+          <div className="mt-5 pt-5 border-t border-nude-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Volume2 className="w-4 h-4 text-gold-600" />
+              <h4 className="font-display font-semibold text-sm">Modo de voz da resposta</h4>
+            </div>
+            <p className="text-xs text-nude-500 mb-3 leading-relaxed">
+              Como o robô deve responder no WhatsApp do cliente. <strong>Texto + Áudio</strong> é o
+              padrão recomendado. Quando o cliente envia áudio (ou mostra sinais de baixo letramento),
+              o sistema <strong>detecta automaticamente</strong> e passa a responder em voz —
+              <em> mesmo no modo padrão</em>.
+            </p>
+            <div className="grid md:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Modo</Label>
+                <select
+                  value={cfg.bot_voice_mode || "text_and_audio"}
+                  onChange={(e) => up("bot_voice_mode", e.target.value)}
+                  className="w-full h-9 px-2 rounded-md border border-nude-200 bg-white text-sm"
+                  data-testid="bot-voice-mode"
+                >
+                  <option value="text_and_audio">Texto + Áudio (recomendado · padrão)</option>
+                  <option value="audio_only">Apenas Áudio (toda resposta vira voz)</option>
+                  <option value="auto">Automático (texto p/ quem digita, áudio p/ quem fala)</option>
+                  <option value="text_only">Apenas Texto (legado · sem voz)</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">Voz da OpenAI TTS</Label>
+                <select
+                  value={cfg.bot_voice || "nova"}
+                  onChange={(e) => up("bot_voice", e.target.value)}
+                  className="w-full h-9 px-2 rounded-md border border-nude-200 bg-white text-sm"
+                  data-testid="bot-voice"
+                >
+                  <option value="nova">Nova (jovem feminina · padrão)</option>
+                  <option value="shimmer">Shimmer (alegre)</option>
+                  <option value="coral">Coral (acolhedora)</option>
+                  <option value="fable">Fable (narrativa)</option>
+                  <option value="alloy">Alloy (neutra)</option>
+                  <option value="onyx">Onyx (grave masculina)</option>
+                  <option value="echo">Echo (calma)</option>
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-nude-400 mt-2 leading-relaxed">
+              💡 A voz selecionada é usada nas respostas enviadas pelo bot pelo WhatsApp.
+              Para escutar o timbre antes, use o player na tela <strong>Chat IA · Análise</strong>.
+            </p>
           </div>
         </Card>
 

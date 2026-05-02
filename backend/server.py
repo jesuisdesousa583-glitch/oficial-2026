@@ -168,6 +168,15 @@ class WhatsAppConfig(BaseModel):
     meta_phone_number_id: Optional[str] = None
     bot_enabled: bool = False
     bot_prompt: Optional[str] = None
+    # Modo de voz do bot na resposta WhatsApp:
+    #   "text_only"      -> apenas texto (legado)
+    #   "text_and_audio" -> envia AMBOS texto + audio TTS (default, opcao B)
+    #   "audio_only"     -> apenas audio TTS (opcao A)
+    #   "auto"           -> texto+audio quando o cliente prefere audio (envia audio
+    #                       primeiro e em mensagens seguintes), so texto caso contrario
+    bot_voice_mode: Literal["text_only", "text_and_audio", "audio_only", "auto"] = "text_and_audio"
+    # Voz da OpenAI TTS usada nas respostas (nova/shimmer/coral/fable/alloy/onyx/echo)
+    bot_voice: str = "nova"
 
 class DebugInstruction(BaseModel):
     instruction: str
@@ -842,9 +851,16 @@ async def get_wa_config(owner_id: str) -> Dict[str, Any]:
             "meta_access_token": "", "meta_phone_number_id": "",
             "bot_enabled": False,
             "bot_prompt": KENIA_DEFAULT_PROMPT,
+            "bot_voice_mode": "text_and_audio",
+            "bot_voice": "nova",
         }
         await db.whatsapp_config.insert_one({**cfg})
         cfg.pop("_id", None)
+    # backfill defaults para configs antigas que nao tinham os campos de voz
+    if "bot_voice_mode" not in cfg:
+        cfg["bot_voice_mode"] = "text_and_audio"
+    if "bot_voice" not in cfg:
+        cfg["bot_voice"] = "nova"
     return cfg
 
 @api_router.get("/whatsapp/config")
@@ -1718,7 +1734,12 @@ async def _maybe_create_appointment_from_message(
     return appt
 
 
-async def _maybe_autorespond(owner_id: str, contact: Dict[str, Any], incoming_text: str):
+async def _maybe_autorespond(
+    owner_id: str,
+    contact: Dict[str, Any],
+    incoming_text: str,
+    incoming_was_audio: bool = False,
+):
     cfg = await get_wa_config(owner_id)
     if not cfg.get("bot_enabled"):
         return None
@@ -2025,32 +2046,150 @@ async def _maybe_autorespond(owner_id: str, contact: Dict[str, Any], incoming_te
             "created_at": now_iso(),
         })
         return reply
-    try:
-        # BaileysProvider supports jid routing; others only accept phone digits
-        if isinstance(prov, BaileysProvider):
-            send_res = await prov.send_text(target_phone, reply, jid=target_jid or None)
-        else:
-            send_res = await prov.send_text(target_phone, reply)
-        delivered = bool(send_res.get("ok"))
-        send_meta = {
-            "delivered": delivered,
-            "provider_response": send_res.get("response"),
-            "provider_status": send_res.get("status"),
-        }
-        if not delivered:
-            log.warning(
-                f"bot reply NOT delivered to {target_phone}: {str(send_res)[:300]}"
+    # ===== DECISAO TEXTO vs AUDIO vs AMBOS =====
+    # Modo de voz vem do config; default text_and_audio (opcao B).
+    voice_mode = (cfg.get("bot_voice_mode") or "text_and_audio").lower()
+    voice_name = (cfg.get("bot_voice") or "nova").lower()
+    # Flag por contato: prefer_audio=True quando o cliente comecou com voz
+    # OU mostrou sinais sutis de baixo letramento.
+    prefer_audio = bool(contact.get("prefer_audio"))
+
+    # Detector sutil de letramento: respostas curtas com erros recorrentes
+    # (sem acentos, palavras cortadas, multiplos espacos, sem pontuacao)
+    # NUNCA expor isso ao cliente — apenas usa internamente para decidir voz.
+    if not prefer_audio and incoming_text:
+        import re as _re_lit
+        t = incoming_text.strip().lower()
+        words = t.split()
+        n_words = len(words)
+        # heuristicas conservadoras (combinadas):
+        no_accents = bool(_re_lit.search(r"[a-z]", t)) and not _re_lit.search(r"[áéíóúâêôãõç]", t)
+        # palavras tipicas com erro/abreviacao
+        typo_hits = sum(1 for w in words if w in {
+            "vc","vcs","tb","tbm","blz","msm","tava","tava","mt","muinto","oce","sera","oq",
+            "cuncerteza","tudim","ten","obg","pq","td","fess","tipu","ki","si","nois","ngc","mim deve",
+            "advogada e","menssagem","mensajem","apusentadoria","bensão","comigu","ouvi de meu","ouve",
+        })
+        # 3+ erros simples + msg curta + sem acento => provavel baixo letramento
+        if n_words >= 2 and n_words <= 12 and (typo_hits >= 2 or (no_accents and typo_hits >= 1)):
+            prefer_audio = True
+
+    if incoming_was_audio:
+        prefer_audio = True
+
+    # Persiste flag pra proximas mensagens manterem o mesmo tratamento
+    if prefer_audio and not contact.get("prefer_audio"):
+        try:
+            await db.whatsapp_contacts.update_one(
+                {"id": contact["id"]}, {"$set": {"prefer_audio": True}}
             )
+            contact["prefer_audio"] = True
+        except Exception:
+            pass
+
+    # Resolve a decisao final (send_text, send_audio):
+    if voice_mode == "text_only":
+        send_text, send_audio = True, False
+    elif voice_mode == "audio_only":
+        send_text, send_audio = False, True
+    elif voice_mode == "auto":
+        # auto: audio quando o contato prefere; senao texto puro
+        send_text = not prefer_audio
+        send_audio = prefer_audio
+    else:  # text_and_audio (default opcao B)
+        send_text = True
+        send_audio = bool(prefer_audio or isinstance(prov, BaileysProvider) is False or True is False) or True
+        # Default: SEMPRE manda os dois (cliente que prefere audio escuta;
+        # quem prefere ler, le; quem usa fone, escuta — UX 'audio + texto' vence)
+        send_audio = True
+
+    # Gera audio TTS se for o caso
+    audio_b64 = None
+    if send_audio:
+        try:
+            tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+            audio_bytes = await tts.generate_speech(
+                text=reply[:4000], model="tts-1",
+                voice=voice_name, response_format="mp3",
+            )
+            audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+        except Exception:
+            log.exception("[bot] TTS gen failed — fallback para texto")
+            send_audio = False
+            send_text = True  # garante que algo seja entregue
+
+    try:
+        # 1) ENVIO DE TEXTO (se aplicavel)
+        send_meta = {"delivered": False}
+        if send_text:
+            if isinstance(prov, BaileysProvider):
+                send_res = await prov.send_text(target_phone, reply, jid=target_jid or None)
+            else:
+                send_res = await prov.send_text(target_phone, reply)
+            delivered_text = bool(send_res.get("ok"))
+            send_meta = {
+                "delivered": delivered_text,
+                "provider_response": send_res.get("response"),
+                "provider_status": send_res.get("status"),
+            }
+            if not delivered_text:
+                log.warning(
+                    f"bot reply NOT delivered to {target_phone}: {str(send_res)[:300]}"
+                )
+
+        # 2) ENVIO DE AUDIO (se aplicavel) — atualmente so Baileys suporta TTS direto
+        audio_meta = {}
+        if send_audio and audio_b64:
+            if isinstance(prov, BaileysProvider):
+                try:
+                    expected_token = (
+                        os.environ.get("BAILEYS_INTERNAL_TOKEN")
+                        or "legalflow-baileys-2026"
+                    )
+                    base_url = os.environ.get("BAILEYS_URL", "http://localhost:8002")
+                    payload_audio = {
+                        "phone": target_phone,
+                        "audio_base64": audio_b64,
+                        "mime": "audio/mp4",
+                    }
+                    if target_jid:
+                        payload_audio["jid"] = target_jid
+                    async with httpx.AsyncClient(timeout=30.0) as c:
+                        r = await c.post(
+                            f"{base_url}/send-audio",
+                            json=payload_audio,
+                            headers={"x-internal-token": expected_token},
+                        )
+                        audio_meta = {
+                            "audio_delivered": r.status_code == 200,
+                            "audio_status": r.status_code,
+                        }
+                        if r.status_code != 200:
+                            log.warning(f"bot AUDIO not delivered: {r.text[:200]}")
+                except Exception:
+                    log.exception("bot send-audio failed")
+                    audio_meta = {"audio_delivered": False}
+            else:
+                # Outros providers ainda nao suportam audio (TODO)
+                audio_meta = {"audio_delivered": False, "audio_status": "provider_unsupported"}
+
+        # marca delivered como True se pelo menos um dos dois entregou
+        send_meta["delivered"] = bool(send_meta.get("delivered")) or bool(audio_meta.get("audio_delivered"))
+        send_meta.update(audio_meta)
     except Exception as e:
         log.exception("bot send failed")
         send_meta = {"delivered": False, "send_error": str(e)[:300]}
-    await db.whatsapp_messages.insert_one({
+
+    msg_doc = {
         "id": str(uuid.uuid4()), "owner_id": owner_id, "contact_id": contact["id"],
         "text": reply, "from_me": True, "provider": prov.name, "bot": True,
         "bot_persona": "Kênia Garcia",
+        "voice_mode_used": ("audio" if (send_audio and not send_text) else
+                            "text_audio" if (send_audio and send_text) else "text"),
         "created_at": now_iso(),
         **send_meta,
-    })
+    }
+    await db.whatsapp_messages.insert_one(msg_doc)
     await db.whatsapp_contacts.update_one(
         {"id": contact["id"]},
         {"$set": {"last_message": reply, "last_message_at": now_iso()}},
@@ -2594,29 +2733,11 @@ async def baileys_webhook(request: Request):
         await _classify_and_create_lead(owner_id, contact, text)
     except Exception:
         log.exception("classify error")
-    reply = await _maybe_autorespond(owner_id, contact, text)
-
-    # Se a mensagem original era audio e tivemos resposta, gera TTS e envia
-    if transcribed and reply:
-        try:
-            tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-            audio_bytes = await tts.generate_speech(
-                text=reply[:4000], model="tts-1", voice="nova", response_format="mp3",
-            )
-            out_b64 = base64.b64encode(audio_bytes).decode("ascii")
-            payload = {"phone": phone, "audio_base64": out_b64, "mime": "audio/mp4"}
-            # Roteia pro jid original (crucial para contatos @lid)
-            if wa_jid:
-                payload["jid"] = wa_jid
-            async with httpx.AsyncClient(timeout=30.0) as c:
-                r = await c.post(
-                    f"{os.environ.get('BAILEYS_URL','http://localhost:8002')}/send-audio",
-                    json=payload,
-                    headers={"x-internal-token": expected},
-                )
-                log.info(f"[Baileys] TTS audio sent: {r.status_code} {r.text[:120]}")
-        except Exception:
-            log.exception("tts send failed")
+    # Marca incoming_was_audio: cliente enviou audio (mesmo que Whisper tenha
+    # falhado em transcrever — o sinal de "cliente fala" e do payload audio_b64).
+    reply = await _maybe_autorespond(
+        owner_id, contact, text, incoming_was_audio=bool(audio_b64)
+    )
     return {"ok": True, "transcribed": bool(transcribed)}
 
 
