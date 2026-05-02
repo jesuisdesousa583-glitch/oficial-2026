@@ -288,27 +288,41 @@ export default function ChatIA() {
                     )}
                     <div className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</div>
                     {m.role === "assistant" && m.audio_base64 && (
-                      <button
-                        onClick={() =>
-                          playingIdx === i ? stopAudio() : playAudio(m.audio_base64, i)
-                        }
-                        className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
-                          playingIdx === i
-                            ? "bg-gold-100 text-gold-900 hover:bg-gold-200"
-                            : "bg-gold-600 text-white hover:bg-gold-700"
-                        }`}
-                        data-testid={`play-audio-${i}`}
-                      >
-                        {playingIdx === i ? (
-                          <>
-                            <Pause className="w-3 h-3" /> Pausar áudio
-                          </>
-                        ) : (
-                          <>
-                            <Volume2 className="w-3 h-3" /> Ouvir resposta da Ana
-                          </>
-                        )}
-                      </button>
+                      <div className="mt-3 space-y-1.5" data-testid={`audio-block-${i}`}>
+                        <button
+                          onClick={() =>
+                            playingIdx === i ? stopAudio() : playAudio(m.audio_base64, i)
+                          }
+                          className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
+                            playingIdx === i
+                              ? "bg-gold-100 text-gold-900 hover:bg-gold-200"
+                              : "bg-gold-600 text-white hover:bg-gold-700"
+                          }`}
+                          data-testid={`play-audio-${i}`}
+                        >
+                          {playingIdx === i ? (
+                            <>
+                              <Pause className="w-3 h-3" /> Pausar áudio
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3 h-3" /> Ouvir resposta da Ana
+                            </>
+                          )}
+                        </button>
+                        {/* Player nativo do navegador — fallback confiavel,
+                            mostra controle, volume e progresso. Remove qualquer
+                            duvida de que o audio esta tocando. */}
+                        <audio
+                          controls
+                          preload="metadata"
+                          src={`data:audio/mpeg;base64,${m.audio_base64}`}
+                          className="w-full max-w-sm h-9"
+                          data-testid={`audio-player-${i}`}
+                        >
+                          Seu navegador não suporta áudio HTML5.
+                        </audio>
+                      </div>
                     )}
                   </div>
                 </div>
