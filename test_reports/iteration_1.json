@@ -1,0 +1,42 @@
+{
+  "summary": "Validated webhook token mismatch bug fix end-to-end. 16/16 backend tests PASS (auth, Baileys status, whatsapp config CRUD, webhook with correct/wrong token, contact+message persistence with autoreply from Natalia, /api/chat/message with Emergent LLM, CRM leads/processes/transactions/appointments). Frontend login + navigation to WhatsApp, CRM, Chat IA, Processos, Agenda all load cleanly without console errors. Confirmed via live DB inspection that the Baileys webhook now persists inbound messages AND triggers an AI autoreply (from_me=true message with Natalia persona text).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/whatsapp/webhook/baileys", "issue": "Returns HTTP 200 with {ok:false,error:'unauthorized'} when token is wrong. Should return 401/403 to be consistent with REST semantics and avoid misleading webhook-sender retry logic. Functional security is preserved (body/error flags it), but monitoring tools will see 200 and assume success."},
+      {"endpoint": "PUT /api/whatsapp/config", "issue": "Returns {\"ok\": true} only; does not echo the updated config. UI must do a follow-up GET. Minor DX nit."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Route map", "issues": ["/app/dashboard, /app/chat, /app/financeiro are not registered routes (React Router logs 'No routes matched'). Actual routes are /app/onboarding, /app/whatsapp, /app/crm, /app/chat-ia, /app/agenda, /app/processes. Not user-visible because sidebar uses correct paths, but these stray links would 404 silently if referenced anywhere."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_webhook_fix_iteration1.py",
+    "/app/test_reports/pytest/pytest_iteration1.xml"
+  ],
+  "action_items": [
+    "(Optional) Return proper HTTP 401 from /api/whatsapp/webhook/baileys when token mismatch instead of 200+{ok:false}.",
+    "(Optional) Make PUT /api/whatsapp/config return the persisted config object so UI doesn't need a round-trip."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3638 lines — should be split into routers (auth, whatsapp, crm, chat, finance, admin). Hurts maintainability and increases merge-conflict risk.",
+    "Baileys webhook token is sent inside the JSON body rather than a header. Header-based auth (e.g., X-Internal-Token) would be more standard and avoid logging the token in plain request bodies (currently the full body including token is logged at INFO level at line 2466 — potential secret leak in logs).",
+    "Webhook returns 200 for unauthorized — inconsistent with FastAPI/HTTP semantics; should raise HTTPException(401).",
+    "emergentintegrations.LlmChat is imported inside functions repeatedly (e.g., line 2492) — works but slows first-hit latency. Could be top-level.",
+    "MongoDB _id is correctly excluded via projection {\"_id\": 0} in get_wa_config — good pattern to keep everywhere."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_webhook_fix_iteration1.py (new test file for iteration 1)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% for core navigation flows tested"},
+  "test_credentials": "admin@kenia-garcia.com.br / Kenia@Admin2026 (validated). BAILEYS_INTERNAL_TOKEN=legalflow-baileys-2026 validated.",
+  "seed_data_creation": "Test created TEST_ prefixed contacts (5511933334444, 5511955556666) and leads (TEST_Lead_*) via webhook/API. Visible in CRM Kanban.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Webhook token fix confirmed working. Baileys sidecar sends token in JSON body (not header). Contact messages endpoint returns both inbound (from_me=false) and outbound AI reply (from_me=true, text starts with 'Oi, <name>! Sou a Natália, secretária da Dra. Kênia Garcia...'). Sidecar is authenticated as 'Erik' — do NOT send to real phone numbers. Transactions live at /api/finance/transactions (not /api/transactions). Frontend routes are under /app/* (e.g., /app/whatsapp, /app/crm, /app/chat-ia).",
+  "rca of the issue": "ROOT CAUSE (already fixed by main agent before this test run): /api/whatsapp/webhook/baileys had default expected token 'espirito-santo-baileys-2026' while the Node.js baileys-service and _spawn_baileys both default to 'legalflow-baileys-2026'. Every inbound message was being dropped with {ok:false,error:'unauthorized'}, preventing both message persistence and AI autoreply. FIX: unified default to 'legalflow-baileys-2026' on backend/server.py line 2473 and set explicit BAILEYS_INTERNAL_TOKEN in backend/.env. VALIDATION: POST webhook with correct token now returns {ok:true}; DB now stores inbound + from_me=true bot reply; GET /api/whatsapp/contacts and /api/whatsapp/messages/{id} expose them."
+}

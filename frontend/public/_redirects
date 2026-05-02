@@ -1,0 +1,5 @@
+/*
+  Render rewrite rules - SPA fallback
+  Garante que rotas client-side (/app, /login, /consulta...) carreguem index.html
+*/
+/*    /index.html   200
