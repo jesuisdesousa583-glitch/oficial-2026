@@ -806,9 +806,19 @@ export default function WhatsAppSettings() {
                         toast.error("Cole a API key primeiro.");
                         return;
                       }
+                      // Sanity checks no formato da key
+                      const k = (cfg.elevenlabs_api_key || "").trim();
+                      const looksOk = (k.startsWith("sk_") && k.length >= 32) || (/^[a-f0-9]{32,}$/i.test(k));
+                      if (!looksOk) {
+                        toast.error(
+                          `Formato suspeito — keys do ElevenLabs começam com "sk_" e têm 40+ chars. Sua key tem ${k.length} chars começa com "${k.slice(0,4)}...". Verifique se não tem espaços/quebras no início ou fim.`,
+                          { duration: 8000 }
+                        );
+                        return;
+                      }
                       // Salva config antes de validar
                       try {
-                        const cfgPayload = { ...cfg };
+                        const cfgPayload = { ...cfg, elevenlabs_api_key: k };
                         delete cfgPayload.owner_id;
                         delete cfgPayload.updated_at;
                         await api.put("/whatsapp/config", cfgPayload);
@@ -816,7 +826,13 @@ export default function WhatsAppSettings() {
                         if (data?.ok) {
                           toast.success(`✅ API key válida! ${data.voices?.length || 0} vozes disponíveis na sua conta.`);
                         } else {
-                          toast.error(`❌ API key inválida: ${data?.error || "verifique se copiou correto e tem créditos"}`, { duration: 7000 });
+                          // Exibe erro detalhado (multi-linha)
+                          const detail = data?.error || "verifique se copiou correto";
+                          toast.error(`❌ ${detail}`, { duration: 12000 });
+                          // Print raw error pra console pra debug
+                          if (data?.raw_error) {
+                            console.warn("[ElevenLabs raw error]", data.raw_error);
+                          }
                         }
                       } catch (e) {
                         toast.error("Erro ao validar: " + (e?.response?.data?.detail || e.message));

@@ -1888,18 +1888,39 @@ async def elevenlabs_list_voices(current_user=Depends(get_current_user)):
         # Extrai mensagem amigavel — SDK do ElevenLabs as vezes retorna texto bruto
         # com status HTTP, outras vezes um JSON estruturado. Tenta achar a causa real.
         msg = str(e)
-        clean = msg
-        if "401" in msg or "Unauthorized" in msg or "missing_permissions" in msg:
-            clean = "API key inválida ou sem permissão. Confirme: 1) a key começa com 'sk_'; 2) você criou em elevenlabs.io/app/settings/api-keys; 3) na criação da key, marcou as permissões 'Voices > Read' e 'Speech Synthesis > Create'."
+        # Tenta extrair body JSON da resposta do ElevenLabs (mais informativo)
+        raw_detail = None
+        try:
+            import re as _re
+            m = _re.search(r'"detail"\s*:\s*\{[^}]*"message"\s*:\s*"([^"]+)"', msg)
+            if m:
+                raw_detail = m.group(1)
+            else:
+                m2 = _re.search(r'"detail"\s*:\s*"([^"]+)"', msg)
+                if m2:
+                    raw_detail = m2.group(1)
+        except Exception:
+            pass
+
+        clean = msg[:180]
+        if "401" in msg or "Unauthorized" in msg or "missing_permissions" in msg or "invalid_api_key" in msg:
+            clean = (
+                "API key inválida. Causas mais comuns:\n"
+                "1) Você copiou a key incompleta (cole novamente, sem espaços no fim).\n"
+                "2) A key foi REVOGADA — vá em elevenlabs.io/app/settings/api-keys e crie outra.\n"
+                "3) Permissões insuficientes — ao criar a key, marque 'Has access to all scopes'.\n"
+                "4) Sua conta ElevenLabs não está verificada (confirme o e-mail)."
+            )
         elif "402" in msg or "quota" in msg.lower() or "credits" in msg.lower():
-            clean = "Sem créditos na conta ElevenLabs. Atualize o plano em elevenlabs.io/app/subscription."
+            clean = "Sem créditos na conta ElevenLabs. Faça upgrade em elevenlabs.io/app/subscription."
         elif "429" in msg:
             clean = "Muitas requisições — aguarde alguns segundos e tente de novo."
-        else:
-            # truncar pra não vomitar todos os headers HTTP na UI
-            clean = msg[:180]
-        log.warning(f"ElevenLabs list voices error: {msg[:300]}")
-        return {"ok": False, "voices": [], "error": clean}
+        elif "free_users_not_allowed" in msg or "subscription" in msg.lower():
+            clean = "Recurso bloqueado no plano FREE. Faça upgrade pro plano Starter ($5/mês) em elevenlabs.io/app/subscription."
+        log.warning(f"ElevenLabs list voices error: {msg[:500]}")
+        if raw_detail:
+            clean = f"{clean}\n\n📨 Erro do ElevenLabs: {raw_detail}"
+        return {"ok": False, "voices": [], "error": clean, "raw_error": msg[:300]}
 
 
 @api_router.post("/whatsapp/elevenlabs/test")
