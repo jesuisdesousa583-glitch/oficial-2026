@@ -555,21 +555,61 @@ export default function WhatsAppSettings() {
 
                 {!baileysStatus?.connected && baileysQr?.qr && (
                   <Card className="p-5 border-nude-200 flex flex-col md:flex-row gap-5 items-center md:items-start">
-                    <div className="p-3 bg-white border border-nude-200 rounded-md shrink-0">
+                    <div className="p-3 bg-white border border-nude-200 rounded-md shrink-0 relative">
                       <img src={baileysQr.qr} alt="QR Code" className="w-56 h-56" data-testid="baileys-qr-image" />
+                      {/* Timer de expiração — QR vive 60s, depois Baileys gera outro */}
+                      {typeof baileysQr.qr_expires_in_s === "number" && (
+                        <div
+                          className={`absolute bottom-1 right-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            baileysQr.qr_expires_in_s > 15
+                              ? "bg-green-100 text-green-800 border border-green-300"
+                              : "bg-red-100 text-red-800 border border-red-300 animate-pulse"
+                          }`}
+                          data-testid="qr-expires-badge"
+                        >
+                          ⏱ {baileysQr.qr_expires_in_s}s
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 text-sm text-nude-700 space-y-3">
-                      <div className="font-medium text-nude-900">Como conectar:</div>
+                      <div className="font-medium text-nude-900 flex items-center gap-2">
+                        Como conectar:
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="ml-auto h-7 text-xs"
+                          onClick={async () => {
+                            try {
+                              const { data } = await api.post("/whatsapp/baileys/restart");
+                              if (data?.ok) {
+                                toast.success("Sessão resetada! Aguarde 5s pelo novo QR...");
+                                setTimeout(() => { pollBaileys(); }, 6000);
+                              } else {
+                                toast.error("Erro ao resetar: " + (data?.error || "desconhecido"));
+                              }
+                            } catch (e) {
+                              toast.error("Erro: " + (e?.response?.data?.detail || e.message));
+                            }
+                          }}
+                          data-testid="baileys-restart-btn"
+                        >
+                          <RefreshCw className="w-3 h-3 mr-1" /> Resetar sessão
+                        </Button>
+                      </div>
                       <ol className="space-y-1.5 list-decimal pl-5 text-nude-600">
                         <li>Abra o WhatsApp no seu celular</li>
                         <li>Toque em <strong>Configurações → Aparelhos conectados</strong></li>
                         <li>Toque em <strong>Conectar um aparelho</strong></li>
-                        <li>Aponte para o QR Code ao lado</li>
+                        <li>Aponte para o QR Code ao lado <strong className="text-red-700">antes do timer chegar a 0</strong></li>
                         <li>Depois de conectar, clique em "Usar Baileys como provedor principal"</li>
                       </ol>
                       <div className="text-[11px] text-gold-700 bg-gold-50 border border-gold-200 p-2 rounded">
+                        💡 <strong>Se o QR expirar antes de escanear</strong>, clique em "Obter QR" de novo
+                        (acima) ou em "Resetar sessão" se travar.
+                      </div>
+                      <div className="text-[11px] text-nude-500 bg-nude-50 border border-nude-200 p-2 rounded">
                         ⚠️ Esta conexão é não-oficial (uso pessoal). Para alto volume comercial,
-                        considere usar Z-API ou Meta Cloud API.
+                        considere Z-API ou Meta Cloud API.
                       </div>
                     </div>
                   </Card>

@@ -1107,6 +1107,25 @@ async def baileys_logout(current_user=Depends(get_current_user)):
     return await prov.logout()
 
 
+@api_router.post("/whatsapp/baileys/restart")
+async def baileys_restart(current_user=Depends(get_current_user)):
+    """Reseta a sessão Baileys do zero: apaga auth_info, mata o socket e gera
+    novo QR. Útil quando o QR expirou várias vezes ou ficou travado em
+    "connecting".
+    """
+    token = os.environ.get("BAILEYS_INTERNAL_TOKEN") or "legalflow-baileys-2026"
+    base_url = os.environ.get("BAILEYS_URL", "http://localhost:8002")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(
+                f"{base_url}/restart",
+                headers={"x-internal-token": token},
+            )
+            return r.json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 @api_router.post("/whatsapp/baileys/reconnect")
 async def baileys_reconnect(current_user=Depends(get_current_user)):
     """Forca o sidecar a subir (caso esteja morto) e retorna status.

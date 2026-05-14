@@ -39,6 +39,7 @@ const logger = pino({ level: "warn" });
 let sock = null;
 let qrRaw = null; // string from baileys
 let qrDataUri = null; // base64 image
+let qrGeneratedAt = null; // timestamp ms (Date.now()) — para mostrar idade do QR
 let connectionState = "close"; // 'close' | 'connecting' | 'open' | 'conflicted'
 let lastError = null;
 let me = null;
@@ -114,6 +115,7 @@ async function startSock() {
       } catch (e) {
         qrDataUri = null;
       }
+      qrGeneratedAt = Date.now();
       connectionState = "connecting";
     }
     if (connection) {
@@ -122,6 +124,7 @@ async function startSock() {
     if (connection === "open") {
       qrRaw = null;
       qrDataUri = null;
+      qrGeneratedAt = null;
       lastError = null;
       reconnectAttempts = 0; // reset backoff on success
       me = sock.user || null;
@@ -131,13 +134,14 @@ async function startSock() {
       const code = lastDisconnect?.error?.output?.statusCode;
       lastError = lastDisconnect?.error?.message || null;
       const loggedOut = code === DisconnectReason.loggedOut;
-      // Detecta "stream replaced" (code 440 / conflict:replaced): significa que
-      // a mesma conta WhatsApp esta logada em outro sidecar Baileys. Se continuarmos
-      // reconectando, entramos em loop infinito "ping-pong" com o outro servidor.
+      // Detecta "stream replaced" (code 440 / conflict:replaced)
       const replaced = code === 440 || /replaced|conflict/i.test(lastError || "");
-      console.log("[baileys] connection closed", { code, loggedOut, replaced, attempts: reconnectAttempts });
-      if (loggedOut) {
-        console.log("[baileys] session invalidated, wiping auth_info and regenerating QR");
+      // Detecta "QR refs attempts ended" — Baileys gerou 5 QRs sem scan; sessao morta
+      const qrEnded = /QR refs attempts ended|QR refs/i.test(lastError || "");
+      console.log("[baileys] connection closed", { code, loggedOut, replaced, qrEnded, attempts: reconnectAttempts });
+      if (loggedOut || qrEnded) {
+        // qrEnded é tratado igual loggedOut: limpa auth e re-inicia fresco
+        console.log("[baileys] resetting session (logged out or QR expired)");
         try {
           const fs = require("fs");
           fs.rmSync(AUTH_DIR, { recursive: true, force: true });
@@ -145,18 +149,16 @@ async function startSock() {
         } catch (_) {}
         qrRaw = null;
         qrDataUri = null;
+        qrGeneratedAt = null;
         me = null;
         reconnectAttempts = 0;
         setTimeout(startSock, 1500);
       } else if (replaced) {
-        // Nao reconecta em loop. Fica em estado "conflicted" ate o usuario agir.
-        console.warn("[baileys] SESSION CONFLICT: outra instancia Baileys esta logada com esta conta. Pausando reconexao. Use /reconnect ou /logout.");
+        console.warn("[baileys] SESSION CONFLICT: outra instancia Baileys esta logada. Pausando reconexao.");
         connectionState = "conflicted";
         lastError = "Sessão em uso em outro servidor. Desconecte o outro Baileys ou clique em Logout aqui e escaneie o QR novamente.";
         me = null;
-        // NAO reconecta automaticamente — espera acao manual via HTTP
       } else {
-        // Backoff exponencial: 3s -> 6s -> 12s -> ... -> 60s max
         reconnectAttempts += 1;
         const delay = Math.min(MAX_BACKOFF_MS, 3000 * Math.pow(2, Math.min(reconnectAttempts - 1, 5)));
         console.log(`[baileys] reconectando em ${Math.round(delay/1000)}s (tentativa ${reconnectAttempts})`);
@@ -290,13 +292,46 @@ app.get("/status", authMiddleware, (_req, res) => {
 });
 
 app.get("/qr", authMiddleware, (_req, res) => {
+  const qrAgeMs = qrGeneratedAt ? Date.now() - qrGeneratedAt : null;
   res.json({
     ok: true,
     connected: connectionState === "open",
     state: connectionState,
     qr: qrDataUri,
     qr_raw: qrRaw,
+    qr_age_s: qrAgeMs !== null ? Math.round(qrAgeMs / 1000) : null,
+    qr_expires_in_s: qrAgeMs !== null ? Math.max(0, 60 - Math.round(qrAgeMs / 1000)) : null,
   });
+});
+
+/**
+ * POST /restart — força nova sessão (apaga auth_info + reinicia).
+ * Útil quando QR expirou várias vezes ou Baileys ficou travado.
+ * IDÊNTICO a /logout mas com nome mais claro pra UX.
+ */
+app.post("/restart", authMiddleware, async (_req, res) => {
+  try {
+    if (sock) {
+      try { await sock.end(); } catch (_) {}
+    }
+    const fs = require("fs");
+    try {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+    } catch (_) {}
+    qrRaw = null;
+    qrDataUri = null;
+    qrGeneratedAt = null;
+    connectionState = "close";
+    lastError = null;
+    me = null;
+    reconnectAttempts = 0;
+    jidRouteCache.clear();
+    setTimeout(startSock, 1000);
+    res.json({ ok: true, message: "Sessão zerada. Em ~5s aparece um novo QR." });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 /**
