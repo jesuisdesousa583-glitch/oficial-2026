@@ -742,14 +742,48 @@ export default function WhatsAppSettings() {
               </div>
               <div>
                 <Label className="text-xs">ElevenLabs API Key</Label>
-                <Input
-                  type="password"
-                  placeholder="sk_xxxxxxxxxxxxxxxxxxxx"
-                  value={cfg.elevenlabs_api_key || ""}
-                  onChange={(e) => up("elevenlabs_api_key", e.target.value)}
-                  data-testid="elevenlabs-api-key"
-                  className="h-9"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    placeholder="sk_xxxxxxxxxxxxxxxxxxxx"
+                    value={cfg.elevenlabs_api_key || ""}
+                    onChange={(e) => up("elevenlabs_api_key", e.target.value)}
+                    data-testid="elevenlabs-api-key"
+                    className="h-9 flex-1"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      if (!cfg.elevenlabs_api_key) {
+                        toast.error("Cole a API key primeiro.");
+                        return;
+                      }
+                      // Salva config antes de validar
+                      try {
+                        const cfgPayload = { ...cfg };
+                        delete cfgPayload.owner_id;
+                        delete cfgPayload.updated_at;
+                        await api.put("/whatsapp/config", cfgPayload);
+                        const { data } = await api.get("/whatsapp/elevenlabs/voices");
+                        if (data?.ok) {
+                          toast.success(`✅ API key válida! ${data.voices?.length || 0} vozes disponíveis na sua conta.`);
+                        } else {
+                          toast.error(`❌ API key inválida: ${data?.error || "verifique se copiou correto e tem créditos"}`, { duration: 7000 });
+                        }
+                      } catch (e) {
+                        toast.error("Erro ao validar: " + (e?.response?.data?.detail || e.message));
+                      }
+                    }}
+                    data-testid="elevenlabs-validate-btn"
+                    className="h-9 whitespace-nowrap"
+                  >
+                    Validar key
+                  </Button>
+                </div>
+                <p className="text-[10px] text-nude-400 mt-1">
+                  💡 Cole sua key e clique <strong>"Validar key"</strong> — confirma se está correta antes de clonar.
+                </p>
               </div>
             </div>
 
@@ -818,7 +852,7 @@ export default function WhatsAppSettings() {
                 <Button
                   onClick={async () => {
                     if (!cfg.elevenlabs_api_key) {
-                      toast.error("Cole sua ElevenLabs API key primeiro e clique em Salvar.");
+                      toast.error("Cole sua ElevenLabs API key primeiro.");
                       return;
                     }
                     if (!voiceCloneFile) {
@@ -831,16 +865,26 @@ export default function WhatsAppSettings() {
                     }
                     setCloning(true);
                     try {
+                      // FIX: salva a config ANTES de chamar /clone — o backend
+                      // /elevenlabs/clone lê a api_key do MongoDB, e se o usuario
+                      // só colou a key na UI sem clicar "Salvar" no topo, a key
+                      // ainda não foi persistida e o endpoint rejeita.
+                      const cfgPayload = { ...cfg };
+                      delete cfgPayload.owner_id;
+                      delete cfgPayload.updated_at;
+                      await api.put("/whatsapp/config", cfgPayload);
+
                       const fd = new FormData();
                       fd.append("voice_name", voiceCloneName);
                       fd.append("description", `Voz clonada — ${voiceCloneName}`);
                       fd.append("audio_file", voiceCloneFile);
                       const { data } = await api.post("/whatsapp/elevenlabs/clone", fd);
-                      toast.success(`Voz clonada com sucesso! voice_id: ${data.voice_id.slice(0, 12)}...`);
+                      toast.success(`Voz clonada! voice_id: ${data.voice_id.slice(0, 14)}...`);
                       await load();
                       setVoiceCloneFile(null);
                     } catch (e) {
-                      toast.error("Erro ao clonar: " + (e?.response?.data?.detail || e.message));
+                      const detail = e?.response?.data?.detail || e.message;
+                      toast.error("Erro ao clonar: " + detail, { duration: 7000 });
                     } finally {
                       setCloning(false);
                     }
