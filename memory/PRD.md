@@ -4,70 +4,57 @@
 > "clone esse aplicativo e verifique por que o chat não está funcionando, faça todos os testes com todas as funcionalidades"
 
 ## Arquitetura
-- **Backend**: FastAPI (Python) — `/app/backend/server.py`
+- **Backend**: FastAPI (Python) — `/app/backend/server.py` (~3.9k linhas)
 - **Frontend**: React/CRA — `/app/frontend/src/`
-- **WhatsApp Sidecar**: Node.js Baileys (`/app/baileys-service/server.js`, porta 8002)
-- **Banco**: MongoDB local (`test_database`)
-- **IA**: Emergent LLM Key — gpt-5.2 / gpt-4o-mini / Whisper-1 / OpenAI TTS
+- **WhatsApp Sidecar**: Node.js Baileys (`/app/baileys-service/`)
+- **Banco**: MongoDB
+- **IA**: Emergent LLM Key (gpt-5.2/gpt-4o-mini/Whisper/OpenAI TTS) + ElevenLabs opcional
 
 ## Personas
 - **Administradora**: Dra. Kênia Garcia (titular)
-- **Bot WhatsApp**: "Natália" (secretária jurídica)
-- **Chat IA público**: "Dra. Ana"
+- **Bot WhatsApp**: **Nislainy** (secretária, conversa com clientes) — *bot_persona interno = "Kênia Garcia"*
+- **Chat IA público (site)**: Ana (advogada virtual)
 
-## Histórico de correções nesta sessão (02-Mai-2026)
+## Histórico de correções (02-Mai-2026)
 
-### 1️⃣ Bug do webhook Baileys (token mismatch) — RESOLVIDO
-- Default token divergia entre backend (`espirito-santo-baileys-2026`) e sidecar (`legalflow-baileys-2026`).
-- Fix: `/app/backend/server.py` linha 2468 unificou para `legalflow-baileys-2026`. Variáveis explícitas em `/app/backend/.env`.
-- **Validação**: 16/16 testes passaram (iteration_1).
+### Iteração 1 — Webhook Baileys (token mismatch) ✅
+- Default token divergia. Fix em `/app/backend/server.py` linha 2468 + `.env`. 16/16 testes.
 
-### 2️⃣ Player de áudio mudo no Chat IA (Ana) — RESOLVIDO
-- Causa: navegador bloqueava `audio.play()` com `NotAllowedError` (autoplay policy).
-- Fix em `/app/frontend/src/pages/ChatIA.jsx`:
-  - Toast informativo quando autoplay é bloqueado
-  - Toast de erro genérico quando audio falha
-  - **`<audio controls>` HTML5 nativo** sob cada resposta da Ana — controle 100% do navegador, com volume slider, timeline, download.
+### Iteração 2 — Chat IA audio mudo + Modo de voz WhatsApp ✅
+- Player HTML5 nativo no Chat IA.
+- Backend: `bot_voice_mode` (text_only|text_and_audio|audio_only|auto) e `bot_voice`. 4 modos selecionáveis.
+- Auto-detecção `prefer_audio` (cliente mandou áudio OU sinais sutis de baixo letramento).
+- Heurística de baixo letramento (sem expor ao cliente).
+- Fallback áudio sem transcrição → bot pede pra repetir. 10/11 testes (1 minor corrigido).
 
-### 3️⃣ Bot enviar áudio (TTS) pelo WhatsApp do cliente automaticamente — IMPLEMENTADO
+### Iteração 3 — Renomeação + 7 áreas + humanização + ElevenLabs + Landing + Image fusion ✅
 **Backend** (`/app/backend/server.py`):
-- Novos campos em `WhatsAppConfig`:
-  - `bot_voice_mode`: `text_only` | `text_and_audio` (default opção B) | `audio_only` (opção A) | `auto`
-  - `bot_voice`: nova/shimmer/coral/fable/alloy/onyx/echo (default `nova`)
-- `_maybe_autorespond` refatorada: gera TTS via OpenAI e envia via `/send-audio` do Baileys conforme config + flag `prefer_audio` do contato.
-- Auto-detecção `prefer_audio=True` quando:
-  - cliente envia áudio (mesmo se Whisper falhar — fallback "[áudio inaudível]")
-  - heurística sutil de baixo letramento (mensagem curta + 2+ erros tipo "vc/tb/blz")
-- Persiste flag em `whatsapp_contacts.prefer_audio` para conversas seguintes.
-- `voice_mode_used` registrado em cada mensagem do bot (`text` | `text_audio` | `audio`).
+- Bot renomeado **Natália → Nislainy** (apenas conversacional; bot_persona interno mantido).
+- Prompt reforçado: **OBRIGATÓRIO se apresentar como Nislainy** em TODA primeira mensagem com cliente novo (validado em 3 áreas após reforço).
+- **7 áreas de expertise**: Trabalhista, Família, Previdenciário, Cível, Consumidor, Criminal, Empresarial. Cada uma com roteiro específico de qualificação. Bot detecta área pelo relato e ativa roteiro SEM listar opções ao cliente.
+- **Humanização**: typing delay = reading_time (50 chars/s) + typing_time (30 chars/s) + pausa 0.8-1.8s aleatória. Cap 10s. Cliente vê pausa natural antes da resposta.
+- **Integração ElevenLabs**: endpoints `/api/whatsapp/elevenlabs/clone` (multipart upload), `/voices` (list), `/test` (gerar amostra). Salva `voice_id` em `whatsapp_config`. `_tts_generate` unificado: usa ElevenLabs se `voice_provider=elevenlabs` + `voice_id` configurado, senão OpenAI TTS via Emergent.
 
-**Frontend** (`/app/frontend/src/pages/WhatsAppSettings.jsx`):
-- Bloco "Modo de voz da resposta" com 2 dropdowns (Modo + Voz da OpenAI TTS)
-- Texto explicativo da detecção automática.
+**Frontend**:
+- `/app/frontend/src/pages/ChatIA.jsx`: `<audio>` agora usa **Blob URL** (`URL.createObjectURL`) em vez de data: URL — resolve definitivamente o áudio mudo em iOS Safari/Chrome mobile com arquivos >250KB-1MB. Novo componente `NativeAudioPlayer`.
+- `/app/frontend/src/pages/WhatsAppSettings.jsx`: nova seção "Voz clonada (ElevenLabs)" com input de API key, dropdown voice_provider, file upload de áudio (.mp3/.wav/.m4a, 30-90s), botão "Clonar voz" e botão de teste.
+- `/app/frontend/src/pages/Landing.jsx`: hero text colors corrigidos (text-nude-700 e text-gold-700 para legibilidade), nova imagem **/escritorio-hero.png** gerada via **Gemini Nano Banana** fundindo as 2 fotos enviadas (fachada real + letreiro "KÊNIA GARCIA ADVOCACIA" dourado, golden hour).
 
-**Validação (testing agent v3 - iteration 2)**: 10/11 backend tests + 100% frontend OK. O 1 teste que falhou (audio sem transcrição → `prefer_audio` não setado) **já foi corrigido** depois dos testes (linha 2721-2728).
+**Deploy manual** (`/app/DEPLOY_RENDER.md`):
+- Manual completo (backend FastAPI Starter + Baileys Node Starter com disco persistente + frontend Static + MongoDB Atlas Free + ElevenLabs opcional).
+- Custo estimado: ~$14-19/mês.
 
-## Implementado / verificado
-- [x] Setup do ambiente Python+Node+Mongo (zip do usuário)
-- [x] Correção do token mismatch do webhook Baileys
-- [x] Player áudio nativo no Chat IA
-- [x] Modo de voz configurável (text_and_audio default, audio_only, auto, text_only)
-- [x] Auto-detecção de cliente que prefere voz
-- [x] Heurística de baixo letramento (sutil, sem expor ao cliente)
-- [x] Voz da OpenAI TTS configurável (7 vozes)
-- [x] Resposta com áudio automática mesmo quando Whisper falha
-- [x] Validação end-to-end via testing agent (2 iterações)
+**Validação (testing agent v3 - iteração 3)**: 6/6 backend + 100% frontend OK. Bot Nislainy validado em 3 áreas (trabalhista, previdenciário, família, empresarial) após reforço de prompt.
 
-## Backlog / próximos passos sugeridos
-- **P1** Webhook retornar HTTP 401 quando token inválido (hoje 200+`ok:false`)
-- **P1** Mover `BAILEYS_INTERNAL_TOKEN` para header `X-Internal-Token` (hoje no body, logado em INFO — risco de leak)
-- **P1** Voice cloning real da Dra. Kênia → integração com **ElevenLabs** (precisa API key do usuário)
-- **P2** Refatorar `server.py` (3.7k linhas) em routers separados
-- **P2** Limpar dead code em `_maybe_autorespond` (linhas 2101-2104)
-- **P3** Real-time updates via WebSocket no painel WhatsApp/CRM
+## Backlog / próximos passos
+- **P1** Webhook async + BackgroundTask (humanização pode estourar 25s em casos longos)
+- **P1** Mover `BAILEYS_INTERNAL_TOKEN` para header `X-Internal-Token`
+- **P2** Refatorar `server.py` (3.9k linhas) em routers (auth, whatsapp, crm, chat, finance, admin, elevenlabs)
+- **P2** Endpoint DELETE `/api/whatsapp/contacts/{id}` (testing agent reportou que não existe)
+- **P2** Hydration warning `<span>` em `<option>` no Select shadcn
+- **P3** Dashboard "leads quentes do dia" + briefing diário em áudio para a Dra. (sugestão de evolução)
 
 ## Próximas ações para o usuário
-1. Acessar painel: `https://chat-debug-test.preview.emergentagent.com/login` com `admin@kenia-garcia.com.br` / `Kenia@Admin2026`
-2. Em **WhatsApp** → seção "Modo de voz da resposta": testar trocando entre os 4 modos
-3. Em **Chat IA · Análise**: enviar mensagens, clicar no player nativo HTML5 da Ana e verificar volume do navegador
-4. Manda mensagem real do celular para o número Erik conectado e verifica que recebe **texto + áudio** no app.
+1. **ElevenLabs**: Quando você gerar a API key em elevenlabs.io → no painel `/app/whatsapp`, role até "Voz clonada (ElevenLabs)" → cole a key → **Salvar** → faça upload de um áudio de 30-90s da Dra. Kênia falando claramente → clique "Clonar voz" → depois mude "Provedor de voz" para ElevenLabs → Salvar.
+2. **Deploy Render**: siga `/app/DEPLOY_RENDER.md` passo-a-passo.
+3. **Teste real**: mande mensagem de outro celular para o número Erik conectado. Nislainy deve responder em ~5-15s com nome do cliente + identificação automática de área.
