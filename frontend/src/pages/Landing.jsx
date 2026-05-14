@@ -11,7 +11,7 @@ import {
   Sparkles, BarChart3, ArrowRight, Check, Bot, Mic, QrCode,
 } from "lucide-react";
 
-const HERO_IMG = "https://customer-assets.emergentagent.com/job_nude-gold-dashboard/artifacts/z6cw9xri_unnamed.jpg";
+const HERO_IMG = "/escritorio-hero.png";
 const LOGO_IMG = "https://customer-assets.emergentagent.com/job_nude-gold-dashboard/artifacts/ckw9kwam_IMG-20241228-WA0003.jpg";
 
 export default function Landing() {
@@ -96,10 +96,10 @@ export default function Landing() {
                 Atendimento 24h · WhatsApp · Voz
               </div>
               <h1 className="font-display font-bold text-5xl lg:text-6xl leading-[0.95] tracking-tighter text-nude-900">
-                Seu escritório, <span className="italic font-medium text-gold-400">guiado</span>
-                <br />pelo <span className="text-gold-200">Espírito Santo</span>.
+                Seu escritório, <span className="italic font-medium text-gold-700">guiado</span>
+                <br />pelo <span className="text-gold-800">Espírito Santo</span>.
               </h1>
-              <p className="mt-6 text-base lg:text-lg text-gold-200/60 leading-relaxed">
+              <p className="mt-6 text-base lg:text-lg text-nude-700 leading-relaxed">
                 Captação de clientes, atendimento via WhatsApp (Baileys — QR Code auto-hospedado),
                 CRM, agenda, financeiro e criativos com IA. Seu robô atende — com texto <em>e voz</em> — 24h por dia.
               </p>
@@ -107,7 +107,7 @@ export default function Landing() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <Button
                   size="lg"
-                  className="bg-gradient-to-r from-gold-500 to-gold-700 hover:from-gold-400 hover:to-gold-600 text-nude-900 font-semibold h-12 px-7 text-base shadow-xl shadow-gold-900/40"
+                  className="bg-gradient-to-r from-gold-600 to-gold-800 hover:from-gold-500 hover:to-gold-700 text-white font-semibold h-12 px-7 text-base shadow-xl shadow-gold-900/40"
                   onClick={() => navigate("/login")}
                   data-testid="hero-cta-primary"
                 >
@@ -116,17 +116,17 @@ export default function Landing() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="h-12 px-7 text-base border-gold-800/60 text-gold-100 hover:bg-gold-950/40 hover:text-gold-200 bg-transparent"
+                  className="h-12 px-7 text-base border-gold-700 text-gold-800 hover:bg-gold-50 hover:text-gold-900 bg-transparent"
                   onClick={() => document.getElementById("contato")?.scrollIntoView({ behavior: "smooth" })}
                   data-testid="hero-cta-secondary"
                 >
                   Falar com a Dra.
                 </Button>
               </div>
-              <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-gold-200/50">
-                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-400" /> WhatsApp 24h</div>
-                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-400" /> Robô IA com voz</div>
-                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-400" /> Setup em 5 min</div>
+              <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-nude-700">
+                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-700" /> WhatsApp 24h</div>
+                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-700" /> Robô IA com voz</div>
+                <div className="flex items-center gap-2"><Check className="w-4 h-4 text-gold-700" /> Setup em 5 min</div>
               </div>
             </div>
           </div>

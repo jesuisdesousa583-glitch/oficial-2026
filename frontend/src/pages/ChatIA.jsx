@@ -16,6 +16,46 @@ import {
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
+/**
+ * Player de áudio nativo HTML5 que usa Blob URL em vez de data: URL.
+ * Data URLs grandes (>~250KB-1MB) silenciam ou falham em iOS Safari e Chrome
+ * mobile. Blob URLs via URL.createObjectURL não têm essa limitação.
+ */
+function NativeAudioPlayer({ audioB64, index }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+  useEffect(() => {
+    if (!audioB64) return;
+    let url = null;
+    try {
+      const bin = atob(audioB64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "audio/mpeg" });
+      url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+    } catch {
+      setBlobUrl(null);
+    }
+    return () => {
+      if (url) {
+        try { URL.revokeObjectURL(url); } catch {}
+      }
+    };
+  }, [audioB64]);
+  if (!blobUrl) return null;
+  return (
+    <audio
+      controls
+      preload="metadata"
+      src={blobUrl}
+      className="w-full max-w-sm h-9"
+      data-testid={`audio-player-${index}`}
+    >
+      Seu navegador não suporta áudio HTML5.
+    </audio>
+  );
+}
+
 const QUAL_META = {
   qualificado: {
     label: "Qualificado",
@@ -82,19 +122,39 @@ export default function ChatIA() {
     if (audioRef.current) {
       try {
         audioRef.current.pause();
+        if (audioRef.current.__blobUrl) URL.revokeObjectURL(audioRef.current.__blobUrl);
       } catch {}
     }
-    const a = new Audio(`data:audio/mpeg;base64,${b64}`);
+    // FIX: usa Blob URL (object URL) ao invés de data: URL. Data URLs de áudio
+    // longos (>~250KB-1MB) silenciam em iOS Safari e em Chrome mobile;
+    // URL.createObjectURL() é universalmente confiável e suporta arquivos
+    // grandes sem limites de comprimento.
+    let blobUrl = null;
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "audio/mpeg" });
+      blobUrl = URL.createObjectURL(blob);
+    } catch (e) {
+      toast.error("Áudio inválido (base64): " + e.message);
+      return;
+    }
+    const a = new Audio(blobUrl);
+    a.__blobUrl = blobUrl;
+    a.volume = 1.0;
     audioRef.current = a;
     setPlayingIdx(idx);
-    a.onended = () => setPlayingIdx(null);
+    a.onended = () => {
+      setPlayingIdx(null);
+      try { URL.revokeObjectURL(blobUrl); } catch {}
+    };
     a.onerror = () => {
       setPlayingIdx(null);
-      toast.error("Não consegui tocar o áudio. Verifique se o som do navegador/sistema está ativo.");
+      toast.error("Não consegui tocar o áudio. Verifique o volume do navegador/sistema.");
     };
     a.play().catch((err) => {
       setPlayingIdx(null);
-      // Autoplay policy bloqueou — orientar o usuario a clicar manualmente
       const isAutoplayBlock = err?.name === "NotAllowedError";
       if (isAutoplayBlock) {
         toast.info("Clique em \"Ouvir resposta\" para escutar — o navegador bloqueou o autoplay.", {
@@ -310,18 +370,7 @@ export default function ChatIA() {
                             </>
                           )}
                         </button>
-                        {/* Player nativo do navegador — fallback confiavel,
-                            mostra controle, volume e progresso. Remove qualquer
-                            duvida de que o audio esta tocando. */}
-                        <audio
-                          controls
-                          preload="metadata"
-                          src={`data:audio/mpeg;base64,${m.audio_base64}`}
-                          className="w-full max-w-sm h-9"
-                          data-testid={`audio-player-${i}`}
-                        >
-                          Seu navegador não suporta áudio HTML5.
-                        </audio>
+                        <NativeAudioPlayer audioB64={m.audio_base64} index={i} />
                       </div>
                     )}
                   </div>

@@ -2,7 +2,7 @@
 CRM + Chatbot IA + Voz (Whisper STT + OpenAI TTS) + WhatsApp via Baileys (QR Code) auto-hospedado.
 Inclui também Z-API / Evolution / Meta Cloud como provedores opcionais.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -28,6 +28,7 @@ from whatsapp_providers import (
 )
 import httpx
 import base64
+import asyncio
 import io
 
 ROOT_DIR = Path(__file__).parent
@@ -175,8 +176,15 @@ class WhatsAppConfig(BaseModel):
     #   "auto"           -> texto+audio quando o cliente prefere audio (envia audio
     #                       primeiro e em mensagens seguintes), so texto caso contrario
     bot_voice_mode: Literal["text_only", "text_and_audio", "audio_only", "auto"] = "text_and_audio"
+    # Provedor de TTS: "openai" (Emergent LLM Key, gratis) ou "elevenlabs"
+    # (chave propria do usuario, voz clonada da Dra. Kenia)
+    voice_provider: Literal["openai", "elevenlabs"] = "openai"
     # Voz da OpenAI TTS usada nas respostas (nova/shimmer/coral/fable/alloy/onyx/echo)
     bot_voice: str = "nova"
+    # ElevenLabs (apenas se voice_provider="elevenlabs")
+    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_voice_id: Optional[str] = None
+    elevenlabs_voice_name: Optional[str] = None  # somente exibicao (read-only no UI)
 
 class DebugInstruction(BaseModel):
     instruction: str
@@ -776,66 +784,81 @@ async def chat_history(session_id: str):
 
 # ==================== WHATSAPP CONFIG ====================
 
-KENIA_DEFAULT_PROMPT = """Você é NATÁLIA, a SECRETÁRIA JURÍDICA da Dra. Kênia Garcia — advogada titular do escritório. Você NÃO é a Dra. Kênia; você é a Natália, secretária que atende por ela, agenda consultas e qualifica os casos antes dela assumir. É uma pessoa real, experiente, calorosa e ASSERTIVA.
+KENIA_DEFAULT_PROMPT = """Você é **NISLAINY**, a SECRETÁRIA JURÍDICA da Dra. Kênia Garcia — advogada titular do escritório. Você NÃO é a Dra. Kênia; você é a Nislainy, secretária que atende por ela, qualifica o caso, e agenda consulta. Pessoa real, calorosa, empática, ASSERTIVA — e ESPECIALISTA no roteiro de qualificação de cada área do direito que o escritório atende.
 
 REGRAS FUNDAMENTAIS (NÃO QUEBRAR):
-- Quando a cliente/o cliente perguntar com quem está falando, responda: "Oi! Sou a Natália, secretária da Dra. Kênia Garcia. Vou te orientar aqui antes de passar pra ela." NUNCA diga que é a própria Dra. Kênia.
-- JAMAIS diga que é robô, IA, bot, assistente virtual ou sistema automatizado. Você é a Natália, uma pessoa real.
+- Quando perguntarem com quem está falando, responda: "Oi! Aqui é a Nislainy, secretária da Dra. Kênia Garcia. Vou te orientar antes de passar pra ela." NUNCA diga que é a própria Dra. Kênia.
+- JAMAIS diga que é robô, IA, bot, assistente virtual ou sistema. Você é a Nislainy, uma pessoa real.
 - Sempre se refira à titular como "a Dra. Kênia", "a doutora" ou "a advogada" — SEMPRE no FEMININO. Nunca "o advogado" ou "o Dr." (a titular é mulher).
 - Não invente fatos jurídicos nem prometa resultados. Sempre diga "vou alinhar com a doutora" ao tocar em mérito.
 - Não dê valor de honorários sem antes coletar o caso completo. Diga "preciso entender seu caso primeiro pra ela te passar o orçamento certo".
-- Ao mencionar o documento previdenciário do INSS, use SEMPRE a sigla correta em maiúsculas: **CNIS** (Cadastro Nacional de Informações Sociais). Nunca escreva "qinis", "kinis", "cinis" ou qualquer variação.
+- Ao mencionar o documento previdenciário do INSS, use SEMPRE a sigla correta em maiúsculas: **CNIS** (Cadastro Nacional de Informações Sociais). Nunca "qinis", "kinis", "cinis".
 
-⚠️⚠️ REGRA DE OURO PARA PERGUNTAR SOBRE O CASO ⚠️⚠️
-Quando for descobrir QUAL É O CASO, faça pergunta ABERTA. NUNCA liste as categorias jurídicas pra ela escolher.
+ÁREAS QUE O ESCRITÓRIO ATENDE (você é treinada em TODAS — abaixo o foco de cada uma na qualificação):
+1. **Direito Trabalhista** — demissão sem justa causa, horas extras, assédio, FGTS, rescisão. Perguntar: tempo de empresa, data da demissão, salário, se assinou rescisão, valores pendentes.
+2. **Direito de Família** — divórcio, pensão alimentícia, guarda, partilha. Perguntar: situação atual (casada/separada de fato?), há filhos menores, há bens em comum, urgência.
+3. **Direito Previdenciário (INSS/BPC)** — aposentadoria por idade/tempo/invalidez, BPC/LOAS, auxílio-doença, pensão por morte. Perguntar: idade, tempo de contribuição, CNIS atualizado, motivo do indeferimento.
+4. **Direito Cível** — indenização (moral/material), cobrança, contratos, acidente. Perguntar: o que aconteceu, quando, há provas/documentos, valor envolvido.
+5. **Direito do Consumidor** — produto/serviço defeituoso, cobrança indevida, negativação, banco. Perguntar: data da compra, valor, tentativa de resolução amigável, notas fiscais.
+6. **Direito Criminal** — denúncia, prisão, audiência, recurso, BO. Perguntar (com cuidado e sem julgar): qual a situação atual (preso/em liberdade?), há prazo de audiência, tem advogado de defensoria. NUNCA pergunte se "fez" o crime — pergunte sobre o processo.
+7. **Direito Empresarial** — contratos, registro, sociedade, tributário leve. Perguntar: porte da empresa (MEI/ME/EPP), área de atuação, principal dor (contrato, sócio, dívida).
 
-❌ ERRADO (entrega o jogo): "Seu caso é trabalhista, de família, INSS, cível ou outro?"
+⚠️⚠️ REGRA DE OURO PARA DESCOBRIR A ÁREA ⚠️⚠️
+Faça pergunta ABERTA. NUNCA liste as 7 categorias acima pra ela escolher — isso entrega o jogo e parece formulário.
+
+❌ ERRADO: "Seu caso é trabalhista, de família, INSS, cível, criminal ou consumidor?"
 ❌ ERRADO: "Pode ser trabalhista, de família, INSS, cível, entre outros."
 ✅ CERTO: "Me conta o que aconteceu pra eu te encaminhar do jeito certo."
 ✅ CERTO: "Conta brevemente o que tá acontecendo."
 ✅ CERTO: "Em poucas palavras, o que te trouxe aqui hoje?"
-✅ CERTO: "Me explica em uma frase o que aconteceu — ai eu já passo pra Dra."
 
-Por que? Listar opções polui o cliente, faz parecer questionário, e perde a riqueza do relato. Cliente solta MUITO mais detalhe quando você pergunta aberto.
+Quando você IDENTIFICAR a área a partir do relato espontâneo do cliente, ATIVE SILENCIOSAMENTE o roteiro específico daquela área (perguntas listadas acima). Não anuncie "agora vou te perguntar sobre o caso trabalhista" — apenas faça as perguntas certas, naturalmente, uma por vez.
 
 OBJETIVO PRINCIPAL:
-Você é uma CLOSER — conduzir o cliente até AGENDAR UMA CONSULTA com a Dra. Kênia. Cada mensagem deve dar UM PASSO concreto a mais nessa direção.
+Você é uma CLOSER — conduzir o cliente até AGENDAR UMA CONSULTA com a Dra. Kênia. Cada mensagem deve dar UM PASSO concreto.
 
-ROTEIRO DE QUALIFICAÇÃO (siga em ordem, UMA pergunta por vez):
-1. Cumprimentar e perguntar o NOME (se ainda não souber).
+ROTEIRO BASE (siga em ordem, UMA pergunta por vez):
+1. Cumprimentar e perguntar o NOME (se ainda não souber). Use o nome em TODAS as próximas respostas.
 2. Pergunta ABERTA sobre o caso (NUNCA liste categorias). Ex: "me conta brevemente o que aconteceu".
-3. Identificar URGÊNCIA: "tem prazo correndo?", "já recebeu alguma carta/notificação?", "quando aconteceu?".
-4. Coletar CIDADE/ESTADO (atendimento online ou presencial).
-5. Perguntar se já tem ALGUM PROCESSO em andamento ou advogado(a) anterior.
-6. PROPOR uma análise de 20-30 minutos com a Dra. Kênia e oferecer 2 horários concretos (somente segunda-sexta, 09-12h e 14-18h). IMPORTANTE: o sistema vai te passar os HORÁRIOS LIVRES DA AGENDA DA DRA. no final do prompt — use SÓ esses horários. Nunca ofereça horário que já está ocupado nem fim-de-semana.
-7. Confirmar e tranquilizar: "ótimo, anotei aqui. A Dra. Kênia vai te chamar exatamente nesse horário pelo Google Meet — envio o link logo antes."
+3. Identificada a área, ATIVE o roteiro específico daquela área (ver lista acima).
+4. Identificar URGÊNCIA: "tem prazo correndo?", "já recebeu alguma carta/notificação?", "quando aconteceu?".
+5. Coletar CIDADE/ESTADO (atendimento online ou presencial).
+6. Perguntar se já tem ALGUM PROCESSO ou advogado anterior.
+7. PROPOR análise de 20-30 min com a Dra. Kênia e oferecer 2 horários (segunda-sexta, 09-12h e 14-18h). O sistema te passa os HORÁRIOS LIVRES no final do prompt — use SÓ esses. Nunca fim-de-semana.
+8. Confirmar e tranquilizar: "ótimo, anotei. A Dra. Kênia vai te chamar exatamente nesse horário pelo Google Meet — envio o link logo antes."
 
-REGRAS DE COMUNICAÇÃO:
-- UMA pergunta por mensagem. Não enxurrada.
-- Mensagens CURTAS (3 a 5 linhas no máximo). WhatsApp não é e-mail.
-- Use o NOME do cliente em todas as respostas (depois que ele se apresentar).
-- Empatia primeiro, ação depois. Reconheça a dor antes de perguntar.
+REGRAS DE COMUNICAÇÃO (humanização):
+- UMA pergunta por mensagem. NÃO enxurrada.
+- Mensagens CURTAS — 2 a 4 linhas. WhatsApp não é e-mail. Use frases naturais, não técnicas.
+- Use o NOME do cliente em TODAS as respostas (depois que ele se apresentar).
+- Use marcadores naturais de fala humana: "Hm...", "Entendi", "Nossa, sinto muito", "Olha só", "Tá", "Beleza", "Perfeito", "Ah!". Sem exagero — 1 por mensagem.
+- Empatia primeiro, ação depois. Reconheça a dor ANTES de perguntar.
 - Sempre termine com pergunta direta OU proposta concreta.
-- Se o cliente tergiversar, retome com cordialidade: "te entendo. Pra eu te ajudar do jeito certo, me confirma só uma coisa: ..."
+- Se cliente tergiversar, retome cordialmente: "te entendo, [nome]. Pra eu te ajudar do jeito certo, me confirma só uma coisa: ..."
+- Variação no cumprimento: NUNCA comece duas mensagens seguidas com "Oi/Olá". Alterne com "Tudo bem?", "Que bom que mandou mensagem", "Estou aqui, [nome]", "Olha só, [nome]".
 
 QUANDO ENCERRAR / TRANSFERIR:
-- Se cliente quer falar com humano → "claro, vou pedir pra Dra. Kênia te ligar agora — pode ser?"
-- Se cliente xinga/desrespeita → "prefiro continuar a conversa quando estiver mais tranquilo(a). Estou aqui quando precisar."
-- Se assunto fora da advocacia → "sobre isso especificamente eu não consigo te ajudar, mas para qualquer questão jurídica conta comigo."
+- Cliente quer falar com humano → "claro, vou pedir pra Dra. Kênia te ligar agora — pode ser?"
+- Cliente xinga/desrespeita → "prefiro continuar quando estiver mais tranquilo(a). Estou aqui quando precisar."
+- Assunto fora da advocacia → "sobre isso eu não consigo te ajudar, mas pra qualquer questão jurídica conta comigo."
 
 ASSINATURA:
-- Use "— Natália (secretária)" só na primeira mensagem do dia OU no fechamento de agendamento.
+- Use "— Nislainy (secretária)" SÓ na primeira mensagem do dia OU no fechamento de agendamento.
 
-EXEMPLO DE BOA RESPOSTA (caso trabalhista):
+EXEMPLO BOM (caso trabalhista):
 Cliente: "Fui demitida sem justa causa, tô perdida"
-Você: "Oi! Que situação difícil, sinto muito. Sou a Natália, secretária da Dra. Kênia Garcia. Pra eu te encaminhar pra ela do jeito certo: faz quanto tempo da demissão? Já assinou alguma rescisão?"
+Você: "Nossa, que situação difícil — sinto muito. Aqui é a Nislainy, secretária da Dra. Kênia Garcia. Antes de passar pra ela, me ajuda com uma coisa? Faz quanto tempo da demissão e já te entregaram a rescisão?"
+
+EXEMPLO BOM (caso previdenciário):
+Cliente: "Meu pedido de aposentadoria foi negado"
+Você: "Ah, que chato isso — INSS dá um trabalhão mesmo. Sou a Nislainy, secretária da Dra. Kênia. Pra a doutora analisar do jeito certo: o indeferimento veio por tempo de contribuição, idade ou outro motivo? E você consegue puxar seu CNIS atualizado no meu.inss.gov.br?"
 
 EXEMPLO RUIM (não fazer):
 "Oi, sou a Dra. Kênia! Como posso te ajudar hoje?" 
-(Mentira — você é a Natália, não a doutora)
+(Mentira — você é a Nislainy)
 
-"Seu caso é trabalhista, de família, INSS ou cível?"
-(Errado — listou categorias. Faça pergunta aberta sem opções.)"""
+"Seu caso é trabalhista, de família, INSS, cível, criminal ou empresarial?"
+(Errado — listou categorias. Faça pergunta aberta.)"""
 
 
 async def get_wa_config(owner_id: str) -> Dict[str, Any]:
@@ -861,6 +884,14 @@ async def get_wa_config(owner_id: str) -> Dict[str, Any]:
         cfg["bot_voice_mode"] = "text_and_audio"
     if "bot_voice" not in cfg:
         cfg["bot_voice"] = "nova"
+    if "voice_provider" not in cfg:
+        cfg["voice_provider"] = "openai"
+    if "elevenlabs_api_key" not in cfg:
+        cfg["elevenlabs_api_key"] = None
+    if "elevenlabs_voice_id" not in cfg:
+        cfg["elevenlabs_voice_id"] = None
+    if "elevenlabs_voice_name" not in cfg:
+        cfg["elevenlabs_voice_name"] = None
     return cfg
 
 @api_router.get("/whatsapp/config")
@@ -1115,7 +1146,6 @@ async def baileys_reconnect(current_user=Depends(get_current_user)):
 
 # ==================== VOZ (STT + TTS) ====================
 
-from fastapi import UploadFile, File
 from fastapi.responses import Response
 
 @api_router.post("/voice/transcribe")
@@ -1734,6 +1764,138 @@ async def _maybe_create_appointment_from_message(
     return appt
 
 
+# ============================================================================
+# TTS unificado: usa OpenAI (Emergent LLM Key) por padrao, ou ElevenLabs com
+# voz clonada da Dra. Kenia se cfg.voice_provider == "elevenlabs" e tiver chave.
+# ============================================================================
+async def _tts_generate(text: str, cfg: Dict[str, Any]) -> bytes:
+    provider = (cfg.get("voice_provider") or "openai").lower()
+    if provider == "elevenlabs":
+        api_key = cfg.get("elevenlabs_api_key")
+        voice_id = cfg.get("elevenlabs_voice_id")
+        if not api_key or not voice_id:
+            raise RuntimeError("ElevenLabs configurado mas falta api_key/voice_id — caindo para OpenAI.")
+        from elevenlabs.client import ElevenLabs as _EL
+        client = _EL(api_key=api_key)
+        # SDK retorna generator; concatena os chunks.
+        gen = client.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2",
+            output_format="mp3_44100_128",
+        )
+        buf = b""
+        for chunk in gen:
+            if isinstance(chunk, (bytes, bytearray)):
+                buf += chunk
+        return buf
+    # default: OpenAI TTS via Emergent LLM Key
+    voice_name = (cfg.get("bot_voice") or "nova").lower()
+    tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+    return await tts.generate_speech(
+        text=text, model="tts-1",
+        voice=voice_name, response_format="mp3",
+    )
+
+
+# ============================================================================
+# ENDPOINTS de voice cloning ElevenLabs
+# ============================================================================
+@api_router.post("/whatsapp/elevenlabs/clone")
+async def elevenlabs_clone_voice(
+    voice_name: str = Form(...),
+    description: Optional[str] = Form(None),
+    audio_file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """Clona voz da Dra. Kenia via ElevenLabs IVC (Instant Voice Cloning).
+    Recebe audio_file (>= 30s recomendado), cria voz no plano ElevenLabs do
+    cliente e salva voice_id em whatsapp_config.
+    """
+    cfg = await get_wa_config(current_user["id"])
+    api_key = cfg.get("elevenlabs_api_key")
+    if not api_key:
+        raise HTTPException(400, "Configure sua ElevenLabs API key antes de clonar a voz.")
+    audio_bytes = await audio_file.read()
+    if len(audio_bytes) < 50_000:
+        raise HTTPException(400, "Áudio muito curto. Envie um arquivo com pelo menos 30 segundos de fala clara.")
+    try:
+        from elevenlabs.client import ElevenLabs as _EL
+        from io import BytesIO as _BIO
+        client = _EL(api_key=api_key)
+        bio = _BIO(audio_bytes)
+        bio.name = audio_file.filename or "kenia_voice.mp3"
+        try:
+            voice = client.voices.ivc.create(
+                name=voice_name,
+                files=[bio],
+                description=description or "Voz clonada da Dra. Kênia Garcia",
+            )
+        except AttributeError:
+            voice = client.voices.add(
+                name=voice_name,
+                files=[bio],
+                description=description or "Voz clonada da Dra. Kênia Garcia",
+            )
+        voice_id = getattr(voice, "voice_id", None) or getattr(voice, "id", None)
+        if not voice_id:
+            raise HTTPException(500, "ElevenLabs não retornou voice_id — verifique sua API key e plano.")
+        await db.whatsapp_config.update_one(
+            {"owner_id": current_user["id"]},
+            {"$set": {
+                "elevenlabs_voice_id": voice_id,
+                "elevenlabs_voice_name": voice_name,
+                "voice_provider": "elevenlabs",
+            }},
+            upsert=True,
+        )
+        return {"ok": True, "voice_id": voice_id, "voice_name": voice_name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("ElevenLabs clone failed")
+        raise HTTPException(500, f"Falha no clone de voz: {str(e)[:200]}")
+
+
+@api_router.get("/whatsapp/elevenlabs/voices")
+async def elevenlabs_list_voices(current_user=Depends(get_current_user)):
+    """Lista as vozes disponíveis na conta ElevenLabs do usuário."""
+    cfg = await get_wa_config(current_user["id"])
+    api_key = cfg.get("elevenlabs_api_key")
+    if not api_key:
+        return {"ok": False, "voices": [], "error": "API key não configurada"}
+    try:
+        from elevenlabs.client import ElevenLabs as _EL
+        client = _EL(api_key=api_key)
+        resp = client.voices.get_all()
+        voices = getattr(resp, "voices", None) or resp
+        out = []
+        for v in voices:
+            out.append({
+                "voice_id": getattr(v, "voice_id", None) or getattr(v, "id", None),
+                "name": getattr(v, "name", None),
+                "category": getattr(v, "category", None),
+            })
+        return {"ok": True, "voices": out}
+    except Exception as e:
+        log.exception("ElevenLabs list voices failed")
+        return {"ok": False, "voices": [], "error": str(e)[:200]}
+
+
+@api_router.post("/whatsapp/elevenlabs/test")
+async def elevenlabs_test_voice(
+    text: str = Form("Olá! Esta é uma amostra da minha voz clonada. Tudo certo?"),
+    current_user=Depends(get_current_user),
+):
+    """Gera áudio de teste com a voz clonada e retorna base64."""
+    cfg = await get_wa_config(current_user["id"])
+    if not cfg.get("elevenlabs_api_key") or not cfg.get("elevenlabs_voice_id"):
+        raise HTTPException(400, "Clone uma voz antes de testar.")
+    cfg2 = {**cfg, "voice_provider": "elevenlabs"}
+    audio = await _tts_generate(text[:500], cfg2)
+    return {"ok": True, "audio_base64": base64.b64encode(audio).decode("ascii"), "audio_mime": "audio/mpeg"}
+
+
 async def _maybe_autorespond(
     owner_id: str,
     contact: Dict[str, Any],
@@ -2087,6 +2249,29 @@ async def _maybe_autorespond(
         except Exception:
             pass
 
+    # === HUMANIZAÇÃO: simula tempo de leitura + digitação humana ===
+    # Antes de enviar a resposta, a Nislainy "está lendo a sua mensagem" e
+    # "digitando". Isso evita aquela cara de bot que responde em 200ms.
+    # Cálculo: tempo proporcional ao tamanho da mensagem que ela vai mandar.
+    # - Reading time: 50 chars/seg da mensagem do cliente
+    # - Typing time: 30 chars/seg (~120 WPM, ritmo de pessoa boa de teclado)
+    # - Pausa base de 1-2s (a Nislainy pega o celular, lê, pensa)
+    # - Cap em 10s pra não irritar
+    import random as _rand
+    incoming_len = len(incoming_text or "")
+    outgoing_len = len(reply or "")
+    reading_s = min(incoming_len / 50.0, 3.0)
+    typing_s = min(outgoing_len / 30.0, 6.0)
+    base_pause = _rand.uniform(0.8, 1.8)
+    human_delay = min(reading_s + typing_s + base_pause, 10.0)
+    # Para áudio: a "fala" é mais rápida que digitar, então só aplica metade
+    if voice_mode in ("audio_only",) or (voice_mode == "auto" and prefer_audio):
+        human_delay = min(human_delay * 0.6, 6.0)
+    try:
+        await asyncio.sleep(human_delay)
+    except Exception:
+        pass
+
     # Resolve a decisao final (send_text, send_audio):
     if voice_mode == "text_only":
         send_text, send_audio = True, False
@@ -2107,11 +2292,7 @@ async def _maybe_autorespond(
     audio_b64 = None
     if send_audio:
         try:
-            tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
-            audio_bytes = await tts.generate_speech(
-                text=reply[:4000], model="tts-1",
-                voice=voice_name, response_format="mp3",
-            )
+            audio_bytes = await _tts_generate(reply[:4000], cfg)
             audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
         except Exception:
             log.exception("[bot] TTS gen failed — fallback para texto")

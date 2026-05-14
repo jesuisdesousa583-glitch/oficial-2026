@@ -29,6 +29,10 @@ export default function WhatsAppSettings() {
   const [webhookResult, setWebhookResult] = useState(null);
   const [diag, setDiag] = useState(null);
   const [loadingDiag, setLoadingDiag] = useState(false);
+  // ElevenLabs voice cloning
+  const [voiceCloneName, setVoiceCloneName] = useState("Dra. Kênia Garcia");
+  const [voiceCloneFile, setVoiceCloneFile] = useState(null);
+  const [cloning, setCloning] = useState(false);
   // Baileys-specific
   const [baileysStatus, setBaileysStatus] = useState(null);
   const [baileysQr, setBaileysQr] = useState(null);
@@ -702,6 +706,158 @@ export default function WhatsAppSettings() {
               💡 A voz selecionada é usada nas respostas enviadas pelo bot pelo WhatsApp.
               Para escutar o timbre antes, use o player na tela <strong>Chat IA · Análise</strong>.
             </p>
+          </div>
+
+          {/* === ELEVENLABS — VOZ CLONADA DA DRA. KENIA === */}
+          <div className="mt-5 pt-5 border-t border-nude-200">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-gold-600" />
+                <h4 className="font-display font-semibold text-sm">Voz clonada (ElevenLabs)</h4>
+              </div>
+              <Badge className="bg-gold-100 text-gold-800 text-[10px]">Plano Starter $5/mês</Badge>
+            </div>
+            <p className="text-xs text-nude-500 mb-3 leading-relaxed">
+              Use a <strong>voz da própria Dra. Kênia</strong> nas respostas do bot.
+              Crie uma conta em <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noreferrer" className="text-gold-700 underline">elevenlabs.io</a>,
+              cole sua API key abaixo e envie um áudio de <strong>30 a 90 segundos</strong> da Dra. falando claramente
+              (sem ruído de fundo). A IA vai clonar a voz e usar nas respostas do WhatsApp.
+            </p>
+
+            <div className="grid md:grid-cols-2 gap-3 mb-3">
+              <div>
+                <Label className="text-xs">Provedor de voz</Label>
+                <select
+                  value={cfg.voice_provider || "openai"}
+                  onChange={(e) => up("voice_provider", e.target.value)}
+                  className="w-full h-9 px-2 rounded-md border border-nude-200 bg-white text-sm"
+                  data-testid="voice-provider"
+                >
+                  <option value="openai">OpenAI TTS (grátis · vozes prontas)</option>
+                  <option value="elevenlabs" disabled={!cfg.elevenlabs_voice_id}>
+                    ElevenLabs (voz clonada da Dra. Kênia)
+                    {!cfg.elevenlabs_voice_id ? " — clone uma voz primeiro" : ""}
+                  </option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">ElevenLabs API Key</Label>
+                <Input
+                  type="password"
+                  placeholder="sk_xxxxxxxxxxxxxxxxxxxx"
+                  value={cfg.elevenlabs_api_key || ""}
+                  onChange={(e) => up("elevenlabs_api_key", e.target.value)}
+                  data-testid="elevenlabs-api-key"
+                  className="h-9"
+                />
+              </div>
+            </div>
+
+            {cfg.elevenlabs_voice_id ? (
+              <div className="bg-gold-50 border border-gold-200 rounded-md p-3 mb-3" data-testid="cloned-voice-card">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm">
+                    <div className="font-semibold text-gold-900">
+                      ✅ Voz clonada: {cfg.elevenlabs_voice_name || "(sem nome)"}
+                    </div>
+                    <div className="text-xs text-gold-700/80 font-mono mt-0.5">
+                      voice_id: {cfg.elevenlabs_voice_id}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const fd = new FormData();
+                        fd.append("text", "Olá! Esta é a minha voz clonada falando aqui no WhatsApp do escritório. Tudo certo?");
+                        const { data } = await api.post("/whatsapp/elevenlabs/test", fd);
+                        if (data?.audio_base64) {
+                          new Audio(`data:audio/mpeg;base64,${data.audio_base64}`).play();
+                          toast.success("Reproduzindo voz clonada...");
+                        }
+                      } catch (e) {
+                        toast.error("Erro ao testar voz: " + (e?.response?.data?.detail || e.message));
+                      }
+                    }}
+                    data-testid="test-cloned-voice-btn"
+                  >
+                    🔊 Testar voz
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="bg-nude-50 border border-dashed border-nude-300 rounded-md p-3">
+              <Label className="text-xs font-semibold mb-1 block">
+                {cfg.elevenlabs_voice_id ? "Substituir voz clonada (re-treinar):" : "Clonar voz da Dra. Kênia:"}
+              </Label>
+              <div className="grid md:grid-cols-3 gap-2 items-end">
+                <div className="md:col-span-1">
+                  <Label className="text-[11px] text-nude-500">Nome da voz</Label>
+                  <Input
+                    placeholder="Dra. Kênia Garcia"
+                    value={voiceCloneName}
+                    onChange={(e) => setVoiceCloneName(e.target.value)}
+                    data-testid="voice-clone-name"
+                    className="h-9"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <Label className="text-[11px] text-nude-500">
+                    Áudio (.mp3 / .wav / .m4a · 30-90s)
+                  </Label>
+                  <Input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(e) => setVoiceCloneFile(e.target.files?.[0] || null)}
+                    data-testid="voice-clone-file"
+                    className="h-9 text-xs"
+                  />
+                </div>
+                <Button
+                  onClick={async () => {
+                    if (!cfg.elevenlabs_api_key) {
+                      toast.error("Cole sua ElevenLabs API key primeiro e clique em Salvar.");
+                      return;
+                    }
+                    if (!voiceCloneFile) {
+                      toast.error("Selecione um arquivo de áudio.");
+                      return;
+                    }
+                    if (!voiceCloneName.trim()) {
+                      toast.error("Dê um nome para a voz (ex: Dra. Kênia Garcia).");
+                      return;
+                    }
+                    setCloning(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append("voice_name", voiceCloneName);
+                      fd.append("description", `Voz clonada — ${voiceCloneName}`);
+                      fd.append("audio_file", voiceCloneFile);
+                      const { data } = await api.post("/whatsapp/elevenlabs/clone", fd);
+                      toast.success(`Voz clonada com sucesso! voice_id: ${data.voice_id.slice(0, 12)}...`);
+                      await load();
+                      setVoiceCloneFile(null);
+                    } catch (e) {
+                      toast.error("Erro ao clonar: " + (e?.response?.data?.detail || e.message));
+                    } finally {
+                      setCloning(false);
+                    }
+                  }}
+                  disabled={cloning}
+                  className="bg-gold-600 hover:bg-gold-700 text-white h-9"
+                  data-testid="voice-clone-submit-btn"
+                >
+                  {cloning ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Clonando...</> : "🎤 Clonar voz"}
+                </Button>
+              </div>
+              <p className="text-[10px] text-nude-400 mt-2 leading-relaxed">
+                ⚠️ Por questões éticas, só clone vozes com <strong>autorização expressa</strong> da pessoa.
+                Áudios curtos (&lt;30s) ou com ruído reduzem a qualidade do clone.
+                A clonagem usa créditos da sua conta ElevenLabs.
+              </p>
+            </div>
           </div>
         </Card>
 
