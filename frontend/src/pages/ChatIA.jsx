@@ -82,7 +82,7 @@ export default function ChatIA() {
     {
       role: "assistant",
       content:
-        "Oi! Aqui é a Ana, secretária da Dra. Kênia Garcia. ☕\n\nMe conta brevemente o que aconteceu — eu te escuto com calma, organizo seu caso e já passo pra doutora. Pode começar.",
+        "Oi! Aqui é a Kênia Garcia, advogada. ☕\n\nMe conta brevemente o que aconteceu — eu te escuto com calma, organizo seu caso e já te dou as primeiras orientações. Pode começar.",
       audio_base64: null,
     },
   ]);
@@ -234,7 +234,7 @@ export default function ChatIA() {
       {
         role: "assistant",
         content:
-          "Recomeçando do zero. ☕ Aqui é a Ana, secretária da Dra. Kênia. Me conta brevemente: o que aconteceu?",
+          "Recomeçando do zero. ☕ Aqui é a Kênia Garcia, advogada. Me conta brevemente: o que aconteceu?",
         audio_base64: null,
       },
     ]);
@@ -252,7 +252,7 @@ export default function ChatIA() {
         <div>
           <div className="overline text-gold-600">Análise de Caso · IA Humanizada</div>
           <h1 className="font-serif text-3xl text-nude-900 mt-1 tracking-tight">
-            Ana <span className="text-gold-600 italic">— secretária da Dra. Kênia Garcia.</span>
+            Kênia Garcia <span className="text-gold-600 italic">— advogada · atende você direto.</span>
           </h1>
         </div>
         <div className="flex items-center gap-2">
@@ -366,7 +366,7 @@ export default function ChatIA() {
                             </>
                           ) : (
                             <>
-                              <Volume2 className="w-3 h-3" /> Ouvir resposta da Ana
+                              <Volume2 className="w-3 h-3" /> Ouvir resposta da Kênia
                             </>
                           )}
                         </button>

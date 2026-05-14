@@ -209,8 +209,8 @@ export default function Landing() {
                   "Boa tarde, fui demitido ontem sem justa causa, preciso de ajuda com a rescisão."
                 </div>
                 <div className="p-3 rounded-lg bg-[#3a2616] border border-gold-700/30 text-sm text-nude-900">
-                  <div className="text-xs text-gold-300 mb-1">Ana (secretária) — resposta em áudio</div>
-                  "Oi! Aqui é a Ana, secretária da Dra. Kênia Garcia. Sinto muito pela situação. Me responde só uma coisa pra eu já organizar com a doutora: faz quanto tempo da demissão e você já assinou alguma rescisão?"
+                  <div className="text-xs text-gold-300 mb-1">Kênia Garcia (advogada) — resposta em áudio</div>
+                  "Oi! Aqui é a Kênia Garcia, advogada. Sinto muito pela situação. Me responde só uma coisa pra eu já organizar seu caso: faz quanto tempo da demissão e você já assinou alguma rescisão?"
                 </div>
                 <div className="p-3 rounded-lg bg-background border border-gold-900/40 text-xs text-gold-200/50">
                   ✓ Áudio transcrito com Whisper → ✓ Resposta gerada pela IA → ✓ Áudio TTS enviado ao cliente
